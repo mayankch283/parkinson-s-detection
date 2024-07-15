@@ -1,0 +1,6 @@
+Flask
+joblib
+librosa
+numpy==1.26.0
+pandas
+scikit-learn

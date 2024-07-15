@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Parkinson's Disease Prediction</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+        }
+        h1 {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        .form-container {
+            width: 60%;
+            margin: auto;
+            border: 1px solid #ccc;
+            padding: 20px;
+            border-radius: 5px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Parkinson's Disease Prediction</h1>
+
+    <div class="form-container">
+        <form id="uploadForm" action="/predict" method="post" enctype="multipart/form-data">
+            <label for="audioFile">Upload Audio File:</label>
+            <input type="file" id="audioFile" name="file" accept=".wav, .mp3" required>
+            <br><br>
+            <button type="submit">Predict</button>
+        </form>
+    </div>
+
+</body>
+</html>

@@ -1,102 +1,55 @@
-from flask import Flask, request, jsonify, render_template
-from werkzeug.utils import secure_filename
-import os
-import numpy as np
-import joblib
+from flask import Flask, request, render_template, jsonify
+from fastai.learner import load_learner
+from pathlib import Path
 import librosa
-import pandas as pd
-from sklearn.impute import SimpleImputer
+import numpy as np
+from PIL import Image
+import io
 
 app = Flask(__name__)
-app.config['UPLOAD_FOLDER'] = 'uploads'
 
-# Load the pre-trained model from the notebook
-model = joblib.load('parkinsons_detector.pkl')
+# Load the exported model
+model = load_learner('predictor.pkl')
 
-# Function to extract voice features
-def extract_voice_features(file_path):
-    y, sr = librosa.load(file_path, sr=None)
-    features = {
-        'MDVP:Fo(Hz)': np.mean(librosa.feature.mfcc(y=y, sr=sr)),
-        'MDVP:Fhi(Hz)': np.max(librosa.feature.mfcc(y=y, sr=sr)),
-        'MDVP:Flo(Hz)': np.min(librosa.feature.mfcc(y=y, sr=sr)),
-        'MDVP:Jitter(%)': np.mean(librosa.feature.mfcc(y=y, sr=sr)),
-        'MDVP:Jitter(Abs)': np.mean(librosa.feature.mfcc(y=y, sr=sr)),
-        'MDVP:RAP': np.mean(librosa.feature.mfcc(y=y, sr=sr)),
-        'MDVP:PPQ': np.mean(librosa.feature.mfcc(y=y, sr=sr)),
-        'Jitter:DDP': np.mean(librosa.feature.mfcc(y=y, sr=sr)),
-        'MDVP:Shimmer': np.mean(librosa.feature.mfcc(y=y, sr=sr)),
-        'MDVP:Shimmer(dB)': np.mean(librosa.feature.mfcc(y=y, sr=sr)),
-        'Shimmer:APQ3': np.mean(librosa.feature.mfcc(y=y, sr=sr)),
-        'Shimmer:APQ5': np.mean(librosa.feature.mfcc(y=y, sr=sr)),
-        'MDVP:APQ': np.mean(librosa.feature.mfcc(y=y, sr=sr)),
-        'Shimmer:DDA': np.mean(librosa.feature.mfcc(y=y, sr=sr)),
-        'NHR': np.mean(librosa.feature.mfcc(y=y, sr=sr)),
-        'HNR': np.mean(librosa.feature.mfcc(y=y, sr=sr)),
-        'RPDE': np.mean(librosa.feature.mfcc(y=y, sr=sr)),
-        'DFA': np.mean(librosa.feature.mfcc(y=y, sr=sr)),
-        'spread1': np.mean(librosa.feature.mfcc(y=y, sr=sr)),
-        'spread2': np.mean(librosa.feature.mfcc(y=y, sr=sr)),
-        'D2': np.mean(librosa.feature.mfcc(y=y, sr=sr)),
-        'PPE': np.mean(librosa.feature.mfcc(y=y, sr=sr))
-    }
-    return features
+def get_spectrogram(audio_file):
+    y, sr = librosa.load(audio_file, duration=5)
+    mel_spec = librosa.feature.melspectrogram(y=y, sr=sr, n_mels=128, fmax=8000)
+    mel_spec_db = librosa.power_to_db(mel_spec, ref=np.max)
+    return mel_spec_db
 
-# Route for home page
-@app.route('/')
-def index():
-    return render_template('index.html')
+def spec_to_image(spec):
+    spec_normalized = (spec - spec.min()) / (spec.max() - spec.min())
+    spec_rgb = np.repeat(spec_normalized[..., np.newaxis], 3, axis=-1)
+    img = Image.fromarray(np.uint8(spec_rgb * 255))
+    return img
 
-# Route to handle audio file upload and prediction
-@app.route('/predict', methods=['POST'])
-def predict():
-    if 'file' not in request.files:
-        return jsonify({'error': 'No file uploaded'}), 400
-    
-    file = request.files['file']
-    
-    if file.filename == '':
-        return jsonify({'error': 'No selected file'}), 400
-    
-    filename = secure_filename(file.filename)
-    file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-    file.save(file_path)
-    
-    # Extract features from the audio file
-    features = extract_voice_features(file_path)
-    
-    # Convert features to DataFrame
-    df_features = pd.DataFrame([features])
-    
-    # Handle NaN values with imputation
-    imputer = SimpleImputer(strategy='mean')
-    df_features_imputed = pd.DataFrame(imputer.fit_transform(df_features))
-    
-    # Reshape features to match model input
-    features_for_model = np.array(df_features_imputed.values).reshape(1, -1)
-    
-    # Handle edge case: check if there are still NaN values
-    if np.isnan(features_for_model).any():
-        return jsonify({'error': 'NaN values found in features'}), 400
-    
-    # Predict using the loaded model
-    prediction = model.predict(features_for_model)
-    
-    # Remove the uploaded file after processing
-    os.remove(file_path)
-    
-    # Prepare prediction result for rendering in a new template
-    if prediction[0] == 1:
-        prediction_text = "Parkinson's Disease"
-    elif prediction[0] == 0 :
-        prediction_text = "Healthy"
-    else:
-        prediction_text = "Unknown"
-    
-    # Render a new template with the prediction result
-    return render_template('prediction_result.html', prediction=prediction_text)
+def get_spec_image(audio_file):
+    spec = get_spectrogram(audio_file)
+    return spec_to_image(spec)
 
-if __name__ == "__main__":
-    if not os.path.exists('uploads'):
-        os.makedirs('uploads')
+@app.route('/', methods=['GET', 'POST'])
+def upload_file():
+    if request.method == 'POST':
+        if 'file' not in request.files:
+            return jsonify({'error': 'No file part'})
+        file = request.files['file']
+        if file.filename == '':
+            return jsonify({'error': 'No selected file'})
+        if file:
+            # Process the audio file
+            img = get_spec_image(file)
+            
+            # Make prediction
+            pred, _, probs = model.predict(img)
+            
+            return jsonify({
+                'prediction': str(pred),
+                'probabilities': {
+                    'healthy': float(probs[0]),
+                    'parkinsons': float(probs[1])
+                }
+            })
+    return render_template('upload.html')
+
+if __name__ == '__main__':
     app.run(debug=True)
